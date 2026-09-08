@@ -93,34 +93,25 @@ jobs:
           docker compose logs frontend
           exit 1
 
-      # ── 10. Wait for Elasticsearch ────────────────────────────
-      - name: ⏳ Wait for Elasticsearch
-        run: |
-          echo "Waiting for Elasticsearch on port 9200..."
-          for i in {1..60}; do
-            if curl -fsS http://127.0.0.1:9200/_cluster/health > /dev/null 2>&1; then
-              echo "✅ Elasticsearch is ready!"
-              exit 0
-            fi
-            echo "⏳ Attempt $i/60..."
-            sleep 3
-          done
-          echo "❌ Elasticsearch did not become ready."
-          docker compose logs elasticsearch
-          exit 1
-
-      # ── 11. Run Playwright tests ──────────────────────────────
+      # ── 10. Run Playwright tests ──────────────────────────────
       - name: 🧪 Run Playwright tests
         working-directory: frontend
         run: npx playwright test
 
-      # ── 12. Push results to Elasticsearch ────────────────────
+      # ── 12. Push results to Elasticsearch (Cloud) ────────────
       - name: 📤 Push test results to Elasticsearch
         if: always()
         working-directory: frontend
         env:
-          ELASTIC_URL: http://127.0.0.1:9200
-        run: node scripts/push-to-elastic.js
+          ELASTIC_URL: ${{ secrets.ELASTIC_URL }}
+          ELASTIC_API_KEY: ${{ secrets.ELASTIC_API_KEY }}
+        run: |
+          if [ -z "$ELASTIC_URL" ]; then
+            echo "⚠️  ELASTIC_URL secret not set — skipping push to Elastic Cloud"
+          else
+            node scripts/push-to-elastic.js
+          fi
+
 
       # ── 13. Upload Playwright report ──────────────────────────
       - name: 📊 Upload Playwright report
