@@ -93,12 +93,36 @@ jobs:
           docker compose logs frontend
           exit 1
 
-      # ── 10. Run Playwright tests ──────────────────────────────
+      # ── 10. Wait for Elasticsearch ────────────────────────────
+      - name: ⏳ Wait for Elasticsearch
+        run: |
+          echo "Waiting for Elasticsearch on port 9200..."
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:9200/_cluster/health > /dev/null 2>&1; then
+              echo "✅ Elasticsearch is ready!"
+              exit 0
+            fi
+            echo "⏳ Attempt $i/60..."
+            sleep 3
+          done
+          echo "❌ Elasticsearch did not become ready."
+          docker compose logs elasticsearch
+          exit 1
+
+      # ── 11. Run Playwright tests ──────────────────────────────
       - name: 🧪 Run Playwright tests
         working-directory: frontend
         run: npx playwright test
 
-      # ── 11. Upload Playwright report ──────────────────────────
+      # ── 12. Push results to Elasticsearch ────────────────────
+      - name: 📤 Push test results to Elasticsearch
+        if: always()
+        working-directory: frontend
+        env:
+          ELASTIC_URL: http://127.0.0.1:9200
+        run: node scripts/push-to-elastic.js
+
+      # ── 13. Upload Playwright report ──────────────────────────
       - name: 📊 Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
@@ -108,7 +132,7 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # ── 12. Upload test results ───────────────────────────────
+      # ── 14. Upload test results ───────────────────────────────
       - name: 📋 Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -118,12 +142,12 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # ── 13. Collect Docker logs on failure ────────────────────
+      # ── 15. Collect Docker logs on failure ────────────────────
       - name: 🐳 Collect Docker logs
         if: failure()
         run: docker compose logs > docker-logs.txt
 
-      # ── 14. Upload Docker logs ────────────────────────────────
+      # ── 16. Upload Docker logs ────────────────────────────────
       - name: 📋 Upload Docker logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -133,7 +157,7 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # ── 15. Cleanup ───────────────────────────────────────────
+      # ── 17. Cleanup ───────────────────────────────────────────
       - name: 🧹 Cleanup
         if: always()
-        run: docker compose down
+        run: docker compose down -v
