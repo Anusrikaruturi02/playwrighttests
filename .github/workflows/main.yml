@@ -1,0 +1,139 @@
+name: 🚀 AI Talent Acquisition CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: playwright-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright-tests:
+    name: 🧪 Playwright E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+
+      # ── 1. Checkout ───────────────────────────────────────────
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Verify structure ───────────────────────────────────
+      - name: 🔍 Verify repository structure
+        run: |
+          echo "=== Root ===" && ls -la
+          echo "=== frontend ===" && ls -la frontend
+          echo "=== backend ===" && ls -la backend
+          echo "=== Branch ===" && git branch --show-current
+
+      # ── 3. Setup Node ─────────────────────────────────────────
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      # ── 4. Install frontend deps ──────────────────────────────
+      - name: 📦 Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # ── 5. Install Playwright browsers ────────────────────────
+      - name: 🎭 Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install chromium --with-deps
+
+      # ── 6. Start backend + frontend ───────────────────────────
+      - name: 🐳 Start application
+        run: docker compose up -d --build
+
+      # ── 7. Container status ───────────────────────────────────
+      - name: 🔎 Check Docker containers
+        run: docker compose ps
+
+      # ── 8. Wait for backend ───────────────────────────────────
+      - name: ⏳ Wait for backend
+        run: |
+          echo "Waiting for backend on port 8000..."
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:8000/api/health > /dev/null 2>&1; then
+              echo "✅ Backend is ready!"
+              exit 0
+            fi
+            echo "⏳ Attempt $i/60..."
+            sleep 2
+          done
+          echo "❌ Backend did not become ready."
+          docker compose logs backend
+          exit 1
+
+      # ── 9. Wait for frontend ──────────────────────────────────
+      - name: ⏳ Wait for frontend
+        run: |
+          echo "Waiting for frontend on port 3000..."
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:3000 > /dev/null 2>&1; then
+              echo "✅ Frontend is ready!"
+              exit 0
+            fi
+            echo "⏳ Attempt $i/60..."
+            sleep 2
+          done
+          echo "❌ Frontend did not become ready."
+          docker compose logs frontend
+          exit 1
+
+      # ── 10. Run Playwright tests ──────────────────────────────
+      - name: 🧪 Run Playwright tests
+        working-directory: frontend
+        run: npx playwright test
+
+      # ── 11. Upload Playwright report ──────────────────────────
+      - name: 📊 Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # ── 12. Upload test results ───────────────────────────────
+      - name: 📋 Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: frontend/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # ── 13. Collect Docker logs on failure ────────────────────
+      - name: 🐳 Collect Docker logs
+        if: failure()
+        run: docker compose logs > docker-logs.txt
+
+      # ── 14. Upload Docker logs ────────────────────────────────
+      - name: 📋 Upload Docker logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs
+          path: docker-logs.txt
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # ── 15. Cleanup ───────────────────────────────────────────
+      - name: 🧹 Cleanup
+        if: always()
+        run: docker compose down
