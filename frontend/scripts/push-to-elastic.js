@@ -2,7 +2,7 @@
  * push-to-elastic.js
  *
  * Reads:
- *   frontend/test-results/results.json
+ *   test-results/results.json
  *
  * and indexes each Playwright test result into Elasticsearch.
  *
@@ -21,6 +21,7 @@
  *   GITHUB_RUN_ID
  *   GITHUB_REF_NAME
  *   GITHUB_SHA
+ *   NODE_ENV
  */
 
 const fs = require("fs");
@@ -113,7 +114,6 @@ const timestamp =
 const docs = [];
 
 function walk(suites, parentTitle = "") {
-
   for (const suite of suites || []) {
 
     const suiteTitle =
@@ -132,6 +132,7 @@ function walk(suites, parentTitle = "") {
         // Playwright may contain multiple attempts/retries.
         // We use the last result because it represents
         // the final attempt.
+
         const results =
           testItem.results || [];
 
@@ -183,12 +184,14 @@ function walk(suites, parentTitle = "") {
             Number(result.duration || 0),
 
           retries:
-            Number(testItem.results
-              ? Math.max(
-                  0,
-                  testItem.results.length - 1
-                )
-              : 0),
+            Number(
+              testItem.results
+                ? Math.max(
+                    0,
+                    testItem.results.length - 1
+                  )
+                : 0
+            ),
 
           worker_index:
             Number(
@@ -269,21 +272,27 @@ console.log("");
 console.log("────────────────────────────────────");
 console.log("Playwright Test Results");
 console.log("────────────────────────────────────");
+
 console.log(
   `Total   : ${totalTests}`
 );
+
 console.log(
   `Passed  : ${passedTests}`
 );
+
 console.log(
   `Failed  : ${failedTests}`
 );
+
 console.log(
   `Skipped : ${skippedTests}`
 );
+
 console.log(
   `Pass %  : ${passRate}%`
 );
+
 console.log("────────────────────────────────────");
 console.log("");
 
@@ -321,23 +330,50 @@ const driver =
 // Elasticsearch request helper
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Sends a request to Elasticsearch.
+ *
+ * For normal JSON requests:
+ *   body is converted using JSON.stringify()
+ *
+ * For NDJSON requests such as /_bulk:
+ *   body is sent exactly as provided.
+ */
 function esRequest(
   method,
   pathStr,
-  body = null
+  body = null,
+  contentType = "application/json"
 ) {
 
   return new Promise(
     (resolve, reject) => {
 
-      const data =
-        body !== null
-          ? JSON.stringify(body)
-          : null;
+      let data = null;
+
+      if (body !== null) {
+
+        if (
+          contentType ===
+          "application/x-ndjson"
+        ) {
+
+          // IMPORTANT:
+          // Elasticsearch Bulk API requires
+          // raw NDJSON, NOT JSON.stringify(body).
+
+          data = body;
+
+        } else {
+
+          data =
+            JSON.stringify(body);
+        }
+      }
 
       const headers = {
         "Content-Type":
-          "application/json"
+          contentType
       };
 
       if (ELASTIC_API_KEY) {
@@ -427,6 +463,7 @@ async function ensureIndex() {
     );
 
   // Index already exists
+
   if (check.status === 200) {
 
     console.log(
@@ -437,6 +474,7 @@ async function ensureIndex() {
   }
 
   // Unexpected error checking index
+
   if (
     check.status !== 404
   ) {
@@ -459,6 +497,7 @@ async function ensureIndex() {
   // IMPORTANT:
   // status MUST be keyword for KQL / ESQL
   // exact matching.
+
   const mapping = {
 
     mappings: {
@@ -564,6 +603,8 @@ async function indexDocs() {
 
   for (const doc of docs) {
 
+    // Bulk API action line
+
     bulkBody.push(
       JSON.stringify({
         index: {
@@ -572,10 +613,24 @@ async function indexDocs() {
       })
     );
 
+    // Document line
+
     bulkBody.push(
       JSON.stringify(doc)
     );
   }
+
+  /**
+   * Elasticsearch Bulk API expects NDJSON:
+   *
+   * action
+   * document
+   * action
+   * document
+   *
+   * IMPORTANT:
+   * The complete request MUST end with \n
+   */
 
   const body =
     bulkBody.join("\n") +
@@ -585,7 +640,8 @@ async function indexDocs() {
     await esRequest(
       "POST",
       "/_bulk",
-      body
+      body,
+      "application/x-ndjson"
     );
 
   if (
@@ -623,6 +679,9 @@ async function indexDocs() {
 
     process.exit(1);
   }
+
+  // Elasticsearch can return HTTP 200
+  // while individual bulk operations fail.
 
   if (parsed.errors) {
 
