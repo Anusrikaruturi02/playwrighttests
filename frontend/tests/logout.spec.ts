@@ -23,7 +23,11 @@ async function loginViaUI(
   await page.getByTestId("email-input").fill(email);
   await page.getByTestId("password-input").fill(password);
   await page.getByTestId("login-submit-btn").click();
+<<<<<<< Updated upstream
   await page.waitForURL("**/dashboard", { timeout: 8000 });
+=======
+  await page.waitForURL("**/dashboard");  
+>>>>>>> Stashed changes
 }
 
 async function loginViaAPI(
