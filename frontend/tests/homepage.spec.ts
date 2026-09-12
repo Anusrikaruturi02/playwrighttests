@@ -61,7 +61,7 @@ test.describe('Homepage', () => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/');
     await expect(page.getByTestId('hero')).toBeVisible();
+    
   })
-  
-
 }); 
+
